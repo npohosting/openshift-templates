@@ -1,0 +1,268 @@
+# Please edit the object below. Lines beginning with a '#' will be ignored,
+# and an empty file will abort the edit. If an error occurs while saving this file will be
+# reopened with the relevant failures.
+#
+apiVersion: v1
+kind: Template
+labels:
+  template: nginx-phpfpm-singlepod
+message: |-
+  The following service(s) have been created in your project: ${NGINX_SERVICE_NAME}.
+
+  For more information about using this template, see https://github.com/e-h-b-o/openshift-elk
+metadata:
+  annotations:
+    description: |-
+      Deploy a nginx and php-fpm container within a single pod.
+
+      WARNING: Any data stored will be lost upon pod destruction. Only use this template for testing.
+    iconClass: icon-php
+    openshift.io/display-name: Nginx + PHP-FPM Single Pod
+    tags: quickstart,nginx,php
+    template.openshift.io/documentation-url: https://github.com/e-h-b-o/openshift-templates/nginx-phpfpm
+    template.openshift.io/long-description: This template deploys a pod with nginx and php-fpm put together.
+    template.openshift.io/provider-display-name: NPO Hosting
+    template.openshift.io/support-url: https://hosting.omroep.nl
+  name: nginx-phpfpm-singlepod
+objects:
+# This object creates a the service required for the exposure of nginx.
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      description: Exposes and load balances the application pods
+    name: ${NAME}-service
+    labels:
+      app: ${NAME}
+  spec:
+    ports:
+    - name: web
+      port: 8080
+      targetPort: 8080
+    selector:
+      name: ${NAME}-service
+
+# This object creates a route which exposes the application to the outside world.
+- apiVersion: v1
+  kind: Route
+  metadata:
+    annotations:
+      template.openshift.io/expose-uri: http://{.spec.host}{.spec.path}
+    name: ${NAME}-service
+    labels:
+      app: ${NAME}
+  spec:
+    host: ${APPLICATION_DOMAIN}
+    to:
+      kind: Service
+      name: ${NAME}-service
+
+# In this object we create the configuration for the NGINX instance.
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    annotations:
+      description: Creates a configmap with the required NGINX configuration.
+    name: ${NAME}-nginx-config
+    labels:
+      app: ${NAME}
+  data:
+    default.conf: |-
+      # Make sure the real ip gets in the log
+      set_real_ip_from    10.0.0.0/8;
+      real_ip_header      X-Forwarded-For;
+      real_ip_recursive   on;
+
+      server {
+        listen      8080;
+        server_name localhost;
+
+        access_log    /dev/stdout main;
+        error_log     /dev/stderr;
+
+        root /var/www/html;
+
+        index index.php index.html;
+
+        location ~\.php$ {
+          try_files $uri =404;
+          fastcgi_split_path_info ^(.+\.php)(/.+)$;
+
+          fastcgi_pass 127.0.0.1:9000;
+          fastcgi_index index.php;
+          include fastcgi.conf;
+        }
+      }
+
+# In this object we create some basic configuration for PHPFPM, this is not strictly necessary, but it makes life easier for the end user.
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    annotations:
+      description: Create a configmap with some basic php configuration.
+    name: ${NAME}-phpfpm-config
+    labels:
+      app: ${NAME}
+  data:
+    specials.ini: |-
+      ;extension=<name of extension>.so
+
+# In the next two objects we track and build the php-fpm image and provide the application with the source code from git.
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    annotations:
+      description: Keeps track of changes in the application image
+    name: ${NAME}-phpfpm
+    labels:
+      app: ${NAME}
+
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    annotations:
+      description: Defines how to build the application
+      template.alpha.openshift.io/wait-for-ready: "true"
+    name: ${NAME}-phpfpm
+    labels:
+      app: ${NAME}
+  spec:
+    failedBuildsHistoryLimit: 1
+    output:
+      to:
+        kind: ImageStreamTag
+        name: ${NAME}-phpfpm:latest
+    resources:
+      limits:
+        cpu: "1"
+        memory: 2Gi
+      requests:
+        cpu: "1"
+        memory: 2Gi
+    source:
+      git:
+        ref: ${SOURCE_REPOSITORY_REF}
+        uri: ${SOURCE_REPOSITORY_URL}
+      sourceSecret:
+        name: "${GIT_IDENTITY_KEY}"
+      type: Git
+      configMaps:
+        - configMap:
+            name: ${NAME}-phpfpm-config
+          destinationDir: /usr/local/etc/php/conf.d
+    strategy:
+      sourceStrategy:
+        from:
+          kind: DockerImage
+          name: npohosting/php-fpm:${PHPFPM_VERSION}
+        forcePull: true
+      type: Source
+    successfulBuildsHistoryLimit: 1
+    triggers:
+    - type: ConfigChange
+    - type: ImageChange
+
+# In this object we're actually going to deploy the pod and containers.
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    annotations:
+      description: Defines how to deploy the application server
+      template.alpha.openshift.io/wait-for-ready: "true"
+    name: ${NAME}
+    labels:
+      app: ${NAME}
+  spec:
+    replicas: 1
+    selector:
+      name: ${NAME}-service
+    strategy:
+      type: Rolling
+    template:
+      metadata:
+        labels:
+          name: ${NAME}-service
+        name: ${NAME}-service
+      spec:
+        containers:
+        #################################
+        # NGINX Deployment Confiuration #
+        #################################
+        - image: npohosting/nginx:${NGINX_VERSION}
+          name: ${NAME}-nginx
+          command:
+            - /usr/libexec/s2i/run
+          ports:
+          - containerPort: 8080
+          volumeMounts:
+          - name: ${NAME}-nginx-config
+            mountPath: /etc/nginx/conf.d
+          - name: site-docroot
+            mountPath: /var/www/html
+          ####################################
+          # PHP-FPM Deployment Configuration #
+          ####################################
+        - image: npohosting/php-fpm:${PHPFPM_VERSION}
+          name: ${NAME}-phpfpm
+          command: [ "/bin/sh", "-c" ]
+          args:
+            - echo starting;
+              /tmp/src/run.sh;
+              /usr/libexec/s2i/run;
+          volumeMounts:
+          - name: site-docroot
+            mountPath: /var/www/html
+          - name: ${NAME}-phpfpm-config
+            mountPath: /usr/local/etc/php/conf.d
+        volumes:
+          - name: ${NAME}-nginx-config
+            configMap:
+              name: ${NAME}-nginx-config
+          - name: ${NAME}-phpfpm-config
+            configMap:
+              name: ${NAME}-phpfpm-config
+          - name: site-docroot
+            emptyDir:
+    triggers:
+    - imageChangeParams:
+        automatic: true
+        containerNames:
+        - ${NAME}-phpfpm
+        from:
+          kind: ImageStreamTag
+          name: ${NAME}-phpfpm:latest
+      type: ImageChange
+    - type: ConfigChange
+
+# And here are some parameters, as few as possible
+parameters:
+- description: The name assigned to all of the frontend objects defined in this template.
+  displayName: Name
+  name: NAME
+  required: true
+  value: my-app
+- description: The URL of the repository with your application source code.
+  displayName: Git Repository URL
+  name: SOURCE_REPOSITORY_URL
+  required: true
+- description: Set this to a branch name, tag or other ref of your repository if you
+    are not using the default branch.
+  displayName: Git Reference
+  name: SOURCE_REPOSITORY_REF
+- description: The exposed hostname that will route to the nginx-and-php-fpm service, if left
+    blank a value will be defaulted.
+  displayName: Application Hostname
+  name: APPLICATION_DOMAIN
+- displayName: NGINX Version
+  name: NGINX_VERSION
+  required: true
+  value: latest
+- displayName: PHP-FPM Version
+  name: PHPFPM_VERSION
+  required: true
+  value: latest
+- displayName: GitHub private key
+  name: GIT_IDENTITY_KEY
+  value: "git-secret"
+  required: true
+  description: Private key used to authenticate access to a Git repository.

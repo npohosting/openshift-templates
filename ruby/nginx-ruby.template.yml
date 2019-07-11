@@ -1,0 +1,316 @@
+apiVersion: v1
+kind: Template
+labels:
+  template: ruby-nginx
+message: |-
+  The following service has been deployed in your project:
+  - ${NAME}-ruby
+  - ${NAME}-nginx
+  - ${APPLICATION_DOMAIN}
+
+  For more information about using this template see https://hosting.omroep.nl
+metadata:
+  annotations:
+    description: |-
+      Deploys a Ruby pod using source-to-image.
+
+      WARNING: Any data stored will be lost upon pod destruction!
+    iconClass: icon-ruby
+    openshift.io/display-name: Ruby
+    tags: quickstart,rub
+    template.openshift.io/documentation-url: https://github.com/e-h-b-o/openshift-templates/ruby/templates
+    template.openshift.io/long-description: This template deploys a pod running Ruby
+    template.openshift.io/provider-display-name: NPO Hosting
+    template.openshift.io/support-url: https://hosting.omroep.nl
+  name: ruby
+objects:
+
+#############
+# Nginx
+#############
+
+# Nginx Service
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      description: Exposed and load balances the ${NAME} nginx pods
+    name: ${NAME}-nginx-svc
+  spec:
+    ports:
+    - name: web
+      port: 8080
+      targetPort: 8080
+    selector:
+      name: ${NAME}-nginx-svc
+
+# Nginx route
+- apiVersion: v1
+  kind: Route
+  metadata: 
+    annotations:
+      template.openshift.io/expose-uri: http://{.spec.host}{.spec.path}
+    name: ${NAME}-nginx
+  spec:
+    host: ${APPLICATION_DOMAIN}
+    to:
+      kind: Service
+      name: ${NAME}-nginx-svc
+
+# Nginx ConfigMap
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    annotations:
+      description: Create a configmap with the bare minimum nginx configuration
+    name: ${NAME}-nginx-config
+  data:
+    default.conf: |-
+      server {
+        listen       8080;
+        server_name  localhost;
+        client_max_body_size 0;
+        proxy_connect_timeout       600;
+        proxy_send_timeout          600;
+        proxy_read_timeout          600;
+        send_timeout                600;
+      
+        location ^~ /nginx_status {
+          return 200;
+          access_log off;
+        }
+        
+        location = /favicon.ico {
+          log_not_found off;
+        }
+      
+        location ~* {
+          proxy_redirect off;
+          proxy_http_version 1.1;
+          proxy_connect_timeout 10;
+      
+          proxy_set_header Host $http_host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Scheme $scheme;
+          proxy_set_header Connection "";
+      
+          add_header X-Proxy-Http-Date $upstream_http_date;
+      
+          proxy_pass http://${NAME}-ruby-svc:3000; 
+        }
+      }
+
+# Nginx ImageStream
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    annotations:
+      description: Keeps track of changes in the application image
+    name: ${NAME}-nginx
+
+# Nginx BuildConfig
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    annotations:
+      description: Defines how to build the application
+    name: ${NAME}-nginx
+  spec:
+    output:
+      to:
+        kind: ImageStreamTag
+        name: ${NAME}-nginx:latest
+    source:
+      git:
+        ref: ${SOURCE_REPOSITORY_REF}
+        uri: ${SOURCE_REPOSITORY_URL}
+      sourceSecret:
+        name: "${GIT_IDENTITY_KEY}"
+      type: Git
+    strategy:
+      sourceStrategy:
+        from:
+          kind: DockerImage
+          name: npohosting/nginx:${NGINX_VERSION}
+      type: Source
+    triggers:
+    - type: ConfigChange
+    - type: ImageChange
+
+# Nginx DeploymentConfig
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    annotations:
+      description: Defines how to deploy the application server
+      template.alpha.openshift.io/wait-for-ready: "true"
+    name: ${NAME}-nginx
+  spec:
+    replicas: 1
+    selector:
+      name: ${NAME}-nginx-svc
+    strategy:
+      type: Rolling
+    template:
+      metadata:
+        labels:
+          name: ${NAME}-nginx-svc
+        name: ${NAME}-nginx
+      spec:
+        containers:
+        - image: " "
+          name: ${NAME}-nginx
+          ports:
+          - containerPort: 3000
+          volumeMounts:
+          - name: ${NAME}-nginx-config
+            mountPath: /etc/nginx/conf.d
+        volumes:
+          - name: ${NAME}-nginx-config
+            configMap:
+              name: ${NAME}-nginx-config
+    triggers:
+    - imageChangeParams:
+        automatic: true
+        containerNames:
+        - ${NAME}-nginx
+        from:
+          kind: ImageStreamTag
+          name: ${NAME}-nginx:latest
+      type: ImageChange
+    - type: ConfigChange
+
+#############
+# Ruby
+#############
+
+# Ruby service
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      description: Exposes the ${NAME}-ruby-svc on port 3000
+    name: ${NAME}-ruby-svc
+  spec:
+    ports:
+    - name: ruby
+      port: 3000
+      targetPort: 3000
+    selector:
+      name: ${NAME}-ruby-svc
+
+# Ruby ImageStream
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    annotations:
+      description: Keeps track of changes in the application image
+    name: ${NAME}-ruby
+
+# Ruby BuildConfig
+- apiVersion: v1
+  kind: BuildConfig
+  metadata:
+    annotations:
+      description: Defines how to build ${NAME}
+      template.alpha.openshift.io/wait-for-ready: "true"
+    name: ${NAME}-ruby
+  spec:
+    successfulBuildHistoryLimit: 1
+    failedBuildsHistoryLimit: 1
+    resources:
+      limits:
+        cpu: 1
+        memory: 2Gi
+      requests:
+        cpu: 1
+        memory: 2Gi
+    output:
+      to:
+        kind: ImageStreamTag
+        name: ${NAME}-ruby:latest
+    source:
+      git:
+        ref: ${SOURCE_REPOSITORY_REF}
+        uri: ${SOURCE_REPOSITORY_URL}
+      sourceSecret:
+        name: "${GIT_IDENTITY_KEY}"
+      type: Git
+    strategy:
+      sourceStrategy:
+        from:
+          kind: DockerImage
+          name: npohosting/ruby:${RUBY_VERSION}
+      type: Source
+    triggers:
+    - type: ConfigChange
+    - type: ImageChange
+
+# Ruby DeploymentConfig
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    annotations:
+      description: Defines how to deploy the ${NAME} application server
+      template.alpha.openshift.io/wait-for-ready: "true"
+    name: ${NAME}-ruby
+  spec:
+    replicas: 1
+    selector:
+      name: ${NAME}-ruby-svc
+    strategy:
+      type: Rolling
+    template:
+      metadata:
+        labels:
+          name: ${NAME}-ruby-svc
+        name: ${NAME}-ruby-svc
+      spec:
+        containers:
+        - image: " "
+          name: ${NAME}-ruby
+          ports:
+          - containerPort: 3000
+    triggers:
+    - imageChangeParams:
+        automatic: true
+        containerNames:
+        - ${NAME}-ruby
+        from:
+          kind: ImageStreamTag
+          name: ${NAME}-ruby:latest
+      type: ImageChange
+    - type: ConfigChange
+
+# The Parameters
+parameters:
+- description: The name assigned to all of the frontend objects defined in this template.
+  displayName: Name
+  name: NAME
+  required: true
+  value: my-app
+- description: The URL of the repository with your application source code.
+  displayName: Git Repository URL
+  name: SOURCE_REPOSITORY_URL
+  required: true
+- description: Set this to a branch name, tag or other ref of your repository if you
+    are not using the default branch.
+  displayName: Git Reference
+  name: SOURCE_REPOSITORY_REF
+- description: Secret containing Git SSH Key
+  name: GIT_IDENTITY_KEY
+  displayName: Git SSH Key
+  required: true
+  value: git-secret
+- displayName: Ruby Docker tag
+  name: RUBY_VERSION
+  required: true
+  value: latest
+- description: The exposed hostname that will route to the nginx-and-php-fpm service, if left
+    blank a value will be defaulted.
+  displayName: Application Hostname
+  name: APPLICATION_DOMAIN
+- displayName: NGINX Docker tag
+  name: NGINX_VERSION
+  required: true
+  value: latest
