@@ -14,7 +14,7 @@ This can be edited in the configmap later.
 ## Rollout keycloak
     $ oc create -n <namespace> -f keycloak-app.yaml -p NAMESPACE=<namespace> 
 
-## Log in to the keycloak instance and set your admin password
+## Log in to the keycloak instance and set your admin password (initial username and password can be found in the environmentals)
 Login on `https://<keycloak hostname>/auth/admin`
 
 ## Remove admin default password from deployment environments
