@@ -1,0 +1,235 @@
+apiVersion: v1
+kind: Template
+labels:
+  template: keycloak-nginx
+metadata:
+  annotations:
+    description: |-
+      Keycloak authetication provider
+    openshift.io/display-name: Keycloak
+    tags: Keycloak
+  name: "keycloak"
+
+objects:
+
+############
+# DeploymentConfig : Nginx
+- apiVersion: apps.openshift.io/v1
+  kind: DeploymentConfig
+  metadata:
+    annotations:
+      openshift.io/generated-by: OpenShiftWebConsole
+    labels:
+      app: keycloak
+    name: nginx
+  spec:
+    replicas: 1
+    revisionHistoryLimit: 10
+    selector:
+      app: keycloak
+      deploymentconfig: nginx
+    strategy:
+      activeDeadlineSeconds: 21600
+      resources: {}
+      rollingParams:
+        intervalSeconds: 1
+        maxSurge: 25%
+        maxUnavailable: 25%
+        timeoutSeconds: 600
+        updatePeriodSeconds: 1
+      type: Rolling
+    template:
+      metadata:
+        annotations:
+          openshift.io/generated-by: OpenShiftWebConsole
+        labels:
+          app: keycloak
+          deploymentconfig: nginx
+      spec:
+        containers:
+        - command:
+          - /usr/libexec/s2i/run
+          image: npohosting/nginx:1.15
+          imagePullPolicy: Always
+          name: nginx
+          ports:
+          - containerPort: 8080
+            protocol: TCP
+          resources: {}
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+          - mountPath: /configmaps/nginxconf
+            name: proxy-conf
+            readOnly: true
+          - mountPath: /configmaps/confd
+            name: proxy-confd
+            readOnly: true
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        schedulerName: default-scheduler
+        securityContext: {}
+        terminationGracePeriodSeconds: 30
+        volumes:
+        - configMap:
+            defaultMode: 420
+            name: proxy-conf
+          name: proxy-conf
+        - configMap:
+            defaultMode: 420
+            name: proxy-confd
+          name: proxy-confd
+    triggers:
+    - type: ConfigChange
+
+############
+# Service : secure-keycloak
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      description: The web server's https port.
+    labels:
+      app: keycloak
+      application: keycloak
+    name: secure-keycloak
+  spec:
+    ports:
+      - port: 8443
+        protocol: TCP
+        targetPort: 8443
+    selector:
+      deploymentConfig: keycloak
+    sessionAffinity: None
+    type: ClusterIP
+# Service : nginx
+- apiVersion: v1
+  kind: Service
+  metadata:
+    annotations:
+      openshift.io/generated-by: OpenShiftWebConsole
+    labels:
+      app: keycloak
+    name: nginx
+  spec:
+    ports:
+    - name: 8080-tcp
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+    selector:
+      deploymentconfig: nginx
+    sessionAffinity: None
+    type: ClusterIP
+
+############
+# Route : keycloak
+- apiVersion: route.openshift.io/v1
+  kind: Route
+  metadata:
+    annotations:
+      description: Route for application's https service.
+      kubernetes.io/tls-acme: 'true'
+    labels:
+      app: keycloak
+      application: keycloak
+    name: secure-keycloak
+  spec:
+    host: ${APP_HOSTNAME}
+    tls:
+      termination: edge
+    to:
+      kind: Service
+      name: nginx
+      weight: 100
+    port:
+      targetPort: 8080-tcp
+    wildcardPolicy: None
+
+############
+# ConfigMap : proxy-conf
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: proxy-conf
+  data:
+    nginx.conf: |+
+      worker_processes  1;
+
+      error_log  /var/log/nginx/error.log warn;
+      pid        /var/opt/nginx/nginx.pid;
+
+      events {
+          worker_connections  1024;
+      }
+
+      http {
+          include       /etc/nginx/mime.types;
+          default_type  application/octet-stream;
+
+          log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                            '$status $body_bytes_sent "$http_referer" '
+                            '"$http_user_agent" "$http_x_forwarded_for"';
+
+          access_log  /var/log/nginx/access.log  main;
+
+          sendfile        on;
+          keepalive_timeout  65;
+
+          include /etc/nginx/conf.d/*.conf;
+      }
+# ConfigMap : proxy-confd
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: proxy-confd
+  data:
+    default.conf: |+
+      set_real_ip_from  10.0.0.0/8;
+      real_ip_header    X-Forwarded-For;
+      real_ip_recursive on;
+
+      server {
+          listen       8080;
+
+          location / {
+              return	302	https://${APP_HOSTNAME}/auth/realms/${KEYCLOAK_REALM}/account;
+          }
+
+          location /auth {
+              # Advanced Proxy Config
+              send_timeout 5m;
+              proxy_read_timeout 240;
+              proxy_send_timeout 240;
+              proxy_connect_timeout 240;
+
+              # Basic Proxy Config
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Host $host;
+              proxy_set_header X-Forwarded-Ssl on;
+
+              resolver REPLACE_RESOLVER_IP_BY_STARTUP valid=30s;
+              set $upstream_keycloak secure-keycloak.${NAMESPACE}.svc.cluster.local;
+              proxy_pass https://$upstream_keycloak:8443;
+          }
+      }
+    
+
+
+
+parameters:
+- description: Keycloak hostname to use
+  displayName: application hostname
+  name: APP_HOSTNAME
+  required: true
+- description: The OpenShift Namespace to use for autodiscovery
+  displayName: Namespace
+  name: NAMESPACE
+  required: true
+- description: Keycloak default realm for nginx rewrite
+  displayName: Keycloak Realm
+  name: KEYCLOAK_REALM
+  required: true
+  value: default
