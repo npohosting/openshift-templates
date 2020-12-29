@@ -49,7 +49,7 @@ objects:
         containers:
         - command:
           - /usr/libexec/s2i/run
-          image: npohosting/nginx:1.15
+          image: registry.npohosting.nl/npohosting/nginx:1.15
           imagePullPolicy: Always
           name: nginx
           ports:

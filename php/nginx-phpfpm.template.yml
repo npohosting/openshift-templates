@@ -154,7 +154,7 @@ objects:
       sourceStrategy:
         from:
           kind: DockerImage
-          name: npohosting/php-fpm:${PHPFPM_VERSION}
+          name: registry.npohosting.nl/npohosting/php-fpm:${PHPFPM_VERSION}
         forcePull: true
       type: Source
     successfulBuildsHistoryLimit: 1
@@ -188,7 +188,7 @@ objects:
         #################################
         # NGINX Deployment Confiuration #
         #################################
-        - image: npohosting/nginx:${NGINX_VERSION}
+        - image: registry.npohosting.nl/npohosting/nginx:${NGINX_VERSION}
           name: ${NAME}-nginx
           command:
             - /usr/libexec/s2i/run
@@ -202,7 +202,7 @@ objects:
           ####################################
           # PHP-FPM Deployment Configuration #
           ####################################
-        - image: npohosting/php-fpm:${PHPFPM_VERSION}
+        - image: registry.npohosting.nl/npohosting/php-fpm:${PHPFPM_VERSION}
           name: ${NAME}-phpfpm
           command: [ "/bin/sh", "-c" ]
           args:

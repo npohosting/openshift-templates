@@ -131,7 +131,7 @@ objects:
       sourceStrategy:
         from:
           kind: DockerImage
-          name: npohosting/nginx:${NGINX_VERSION}
+          name: registry.npohosting.nl/npohosting/nginx:${NGINX_VERSION}
       type: Source
     triggers:
     - type: ConfigChange
@@ -240,7 +240,7 @@ objects:
       sourceStrategy:
         from:
           kind: DockerImage
-          name: npohosting/ruby:${RUBY_VERSION}
+          name: registry.npohosting.nl/npohosting/ruby:${RUBY_VERSION}
       type: Source
     triggers:
     - type: ConfigChange
