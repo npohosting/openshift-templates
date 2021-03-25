@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: Template
+labels:
+  template: argocd-cluster
+metadata:
+  name: argocd-cluster
+objects:
+
+- apiVersion: argoproj.io/v1alpha1
+  kind: ArgoCD
+  metadata:
+    name: ${NAME}
+    namespace: ${NAMESPACE}
+  spec:
+    controller:
+      resources:
+        limits:
+          cpu: 1000m
+          memory: 2048Mi
+        requests:
+          cpu: 500m
+          memory: 1024Mi
+    server:
+      host: ${HOSTNAME}
+      insecure: true
+      resources:
+        limits:
+          cpu: 1000m
+          memory: 2048Mi
+        requests:
+          cpu: 500m
+          memory: 1024Mi
+
+- apiVersion: route.openshift.io/v1
+  kind: Route
+  metadata:
+    name: ${NAME}
+    namespace: ${NAMESPACE}
+  spec:
+    host: ${HOSTNAME}
+    port:
+      targetPort: http
+    tls:
+      insecureEdgeTerminationPolicy: Redirect
+      termination: edge
+    to:
+      kind: Service
+      name: ${NAME}-server
+
+parameters:
+- name: NAME
+  description: "Name of your ArgoCD cluster."
+  required: true
+- name: NAMESPACE
+  description: "In which namespace the ArgoCD cluster should be installed."
+  required: true
+- name: HOSTNAME
+  description: "The URL you wish to use to access the ArgoCD cluster."
+  required: true
+- name: OMROEP
+  description: "The name with which a Project has to start."

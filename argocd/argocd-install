@@ -1,0 +1,157 @@
+#!/bin/bash
+
+## Configuration
+ArgoCD_Cluster_yaml=./argocd-template.yml                     # This file contains the main ArgoCD Cluster and it's route
+ArgoCD_AppProject_yaml=./argocd-appproject.yml                # This file configures the default AppProject
+ArgoCD_ProjectConfig_yaml=./configure-projects.yml            # This file configures ArgoCD access to other Projects
+ArgoCD_Name=                                                  # The name of the cluster
+ArgoCD_Namespace=                                             # Where the namespace is installed
+ArgoCD_Customer=                                              # Who is installing this Cluster
+ArgoCD_Managed_Namespace=                                     # The namespace which ArgoCD should be able to access
+ArgoCD_Hostname=                                              # The hostname
+ArgoCD_AccessOnly=false                                       # Whether to run the Access Configuration only
+ArgoCD_Create_Delete=apply
+
+usage="Usage: argocd-install [options <arguments>] 
+    -n      Name of the ArgoCD Cluster.
+    -p      Namespace where to install the ArgoCD Cluster.
+    -c      Which organization are you (valid options are: nos, hens).
+    -t      Which Namespace needs to be managed by ArgoCD.
+    -H      Hostname of the ArgoCD Cluster.
+    -a      This option allows you to give ArgoCD access to a new project, without installing an entire cluster.
+"
+
+while getopts n:p:c:t:H:haD opt; do
+    case "$opt" in
+        n)      ArgoCD_Name=$OPTARG;;
+        p)      ArgoCD_Namespace=$OPTARG;;
+        c)      ArgoCD_Customer=$OPTARG;;
+        t)      ArgoCD_Managed_Namespace=$OPTARG;;
+        h)      echo "$usage"
+                exit 0;;
+        H)      ArgoCD_Hostname=$OPTARG;;
+        D)      ArgoCD_Create_Delete=delete;;
+        a)      ArgoCD_AccessOnly=true;;
+        *)      echo "$usage"
+                exit 1;;
+    esac
+done
+
+if [ "$ArgoCD_Create_Delete" == "delete" ] ; then
+    read -p "Warning! Delete mode enabled. This will delete your ArgoCD Cluster. Continue? " yn
+    case yn in
+        [Yy]* )     echo "Continuing...";;
+        * )         echo "Aborted."
+                    exit 0;;
+    esac
+fi
+
+## General sanity checks
+# Test ic the oc client is installed.
+which oc > /dev/null
+if [ "$?" == "1" ] ;  then
+    echo "The oc client is not installed. Please install this first."
+    exit 1
+fi
+
+# Test if the user is logged in
+oc whoami > /dev/null
+if [ "$?" == "1" ] ;  then
+    echo "It appears you are not logged in to an OpenShift cluster. Please login first."
+    exit 1
+fi
+
+# Test whether the ArgoCD project exists.
+oc get project | grep -q -w $ArgoCD_Namespace
+if [ "$?" == "1" ] ;  then
+    echo "Target Namespace ($ArgoCD_Namespace) for the ArgoCD Cluster does not exist. Please create this first."
+    exit 1
+fi
+
+# Test if the ArgoCD Controller is installed.
+oc get pods -n $ArgoCD_Namespace | grep -w -q argocd-operator
+if [ "$?" == "1" ] ;  then
+    echo "The ArgoCD Operator appears to be missing. Please contact NPO Hosting & Streaming to install it for you first."
+    exit 1
+fi
+
+# Test if the user specified a namespace which should be managed by ArgoCD. And if it exists.
+if [ -z "$ArgoCD_Managed_Namespace" ] ; then
+    echo "No Managed Namespace specified. Skipping for now."
+    skipConfigureProject=true
+else
+    oc get project | grep -q -w $ArgoCD_Managed_Namespace
+    if [ "$?" == "1" ] ; then
+        read -p "The Managed Namespace does not exist. Shall I make it for you (y/n)? " yn
+        case $yn in
+            [Yy]* ) oc new-project $ArgoCD_Managed_Namespace;;
+            * ) echo "No? Ok. Skipping"
+                skipConfigureProject=true;;
+        esac
+    fi
+fi
+## This looks sane enough to me. 
+
+## Make sure we are in the correct Project
+oc project $ArgoCD_Namespace > /dev/null
+
+if [ "$ArgoCD_AccessOnly" == "false" ] ; then
+
+    ## Install cluster
+    # Test if there isn't an other cluster installed with the same name.
+    oc get argocd -n $ArgoCD_Namespace $ArgoCD_Name &> /dev/null
+    if [ "$?" == "0" ] ;  then
+        echo "The ArgoCD Cluster $ArgoCD_Name already exists."
+        exit 1
+    fi
+
+    # Test if a Hostname is passed, else, guess one.
+    if [ -z "$ArgoCD_Hostname" ] ; then
+        echo "No Hostname given, going to guess one."
+        read -p "Do you want me to use argocd.apps.$ArgoCD_Customer.cluster.chp4.io as a hostname (y/n)? " yn
+        case $yn in
+            [Yy]* ) ArgoCD_Hostname=argocd.apps.$ArgoCD_Customer.cluster.chp4.io;;
+            *)  echo "No? Ok. Exiting."
+                exit 1;;
+        esac
+    fi
+
+    # Actually install it
+    oc process -f $ArgoCD_Cluster_yaml \
+        -p NAME=$ArgoCD_Name \
+        -p NAMESPACE=$ArgoCD_Namespace \
+        -p HOSTNAME=$ArgoCD_Hostname \
+    -o yaml | oc $ArgoCD_Create_Delete -f -
+
+    # Wait for the cluster to become available
+    while [[ $(oc get argocd $ArgoCD_Name -o 'jsonpath={..status.phase}') != Available ]] ; do
+    echo "Waiting for ArgoCD Cluster to become available." && sleep 1;
+    done 
+
+    # Test whether the customer is valid.
+    case $ArgoCD_Customer in
+        # Voor nu alleen nos en hens, later maak ik die wel langer.
+        nos|hens)    dummy=ok;;
+        *)           echo "Customer $ArgoCD_Customer does not exists."
+                    exit 1;;
+    esac
+
+    # Configure AppProject
+    oc process -f $ArgoCD_AppProject_yaml \
+        -p NAMESPACE=$ArgoCD_Namespace \
+        -p OMROEP=$ArgoCD_Customer \
+    -o yaml | oc $ArgoCD_Create_Delete -f -
+    ## End Cluster installation
+
+    # Annotate route for Letencrypt
+    oc annotate route $ArgoCD_Name -n $ArgoCD_Namespace kubernetes.io/tls-acme=true
+
+fi
+
+if [ ! -z "$ArgoCD_Managed_Namespace" ] ; then
+# Give ArgoCD access to other Projects
+oc process -f $ArgoCD_ProjectConfig_yaml \
+  -p ARGOCD_NAMESPACE=$ArgoCD_Namespace \
+  -p TARGET_NAMESPACE=$ArgoCD_Managed_Namespace \
+-o yaml | oc $ArgoCD_Create_Delete -f -
+fi

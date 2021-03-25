@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Template
+labels:
+  template: argocd-appproject
+metadata:
+  name: argocd-appproject
+objects:
+
+- apiVersion: argoproj.io/v1alpha1
+  kind: AppProject
+  metadata:
+    name: default
+    namespace: ${NAMESPACE}
+  spec:
+    clusterResourceWhitelist:
+      - group: '*'
+        kind: '*'
+    destinations:
+      - namespace: ${OMROEP}-*
+        server: '*'
+    sourceRepos:
+      - '*'
+
+parameters:
+- name: NAMESPACE
+  description: "In which namespace the ArgoCD cluster should be installed."
+  required: true
+- name: OMROEP
+  description: "The name with which a Project has to start."      
