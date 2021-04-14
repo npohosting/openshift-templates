@@ -220,3 +220,24 @@ Je ArgoCD installatie is nu klaar voor gebruik, onderstaande nog een paar handig
 * ArgoCD Documentatie: https://argoproj.github.io/argo-cd/
 * Documentatie over de interne RBAC: https://argoproj.github.io/argo-cd/operator-manual/rbac/
 * Documentatie over usermanagement en overige authenticatie methodes: https://argoproj.github.io/argo-cd/operator-manual/user-management/
+
+## Extra opties.
+
+### Configureren Kustomize Build Options
+
+Voor het configureren van Kustomize Build Options (https://argocd-operator.readthedocs.io/en/latest/reference/argocd/#kustomize-build-options), moet de ArgoCD Operator worden aangepast:
+
+```
+oc edit argocd argocd-demo -n hens-argocd-demo
+```
+
+In de yaml voeg je vervolgens `kustomizeBuildOptions: --load_restrictor none` toe aan de `spec`, let wel op dat je verder niks aanpast dit kan het cluster stuk maken.
+
+```yaml
+...
+spec:
+  kustomizeBuildOptions: --load_restrictor none
+...
+```
+
+De aanpassingen zullen nu worden doorgevoerd in de `argocd-cm` configMap. Probeer deze aanpassing niet direct door te voeren in de configMap want dat wordt door de operator overschreven.
