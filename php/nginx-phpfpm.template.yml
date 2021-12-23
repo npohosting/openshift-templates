@@ -207,7 +207,7 @@ objects:
           command: [ "/bin/sh", "-c" ]
           args:
             - echo starting;
-              /tmp/src/run.sh;
+              sh /tmp/src/run.sh;
               /usr/libexec/s2i/run;
           volumeMounts:
           - name: site-docroot
