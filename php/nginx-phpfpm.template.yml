@@ -2,7 +2,7 @@
 # and an empty file will abort the edit. If an error occurs while saving this file will be
 # reopened with the relevant failures.
 #
-apiVersion: v1
+apiVersion: template.openshift.io/v1
 kind: Template
 labels:
   template: nginx-phpfpm-singlepod
@@ -43,7 +43,7 @@ objects:
       name: ${NAME}-service
 
 # This object creates a route which exposes the application to the outside world.
-- apiVersion: v1
+- apiVersion: route.openshift.io/v1
   kind: Route
   metadata:
     annotations:
@@ -108,7 +108,7 @@ objects:
       ;extension=<name of extension>.so
 
 # In the next two objects we track and build the php-fpm image and provide the application with the source code from git.
-- apiVersion: v1
+- apiVersion: image.openshift.io/v1
   kind: ImageStream
   metadata:
     annotations:
@@ -117,7 +117,7 @@ objects:
     labels:
       app: ${NAME}
 
-- apiVersion: v1
+- apiVersion: build.openshift.io/v1
   kind: BuildConfig
   metadata:
     annotations:
@@ -163,7 +163,7 @@ objects:
     - type: ImageChange
 
 # In this object we're actually going to deploy the pod and containers.
-- apiVersion: v1
+- apiVersion: apps.openshift.io/v1
   kind: DeploymentConfig
   metadata:
     annotations:
